@@ -98,7 +98,8 @@ class Solver(object):
             self.ema = None
 
         self.logger.log_info(str(get_model_parameters_info(self.model)))
-
+        self.args.local_rank=0
+        
         self.model.to(self.args.local_rank)
         
         self.device = self.args.local_rank

@@ -10,5 +10,5 @@ from web_api import basicpitch_router, getmusic_router
 ########################################################
 # start server
 app = FastAPI()
-app.include_router(basicpitch_router)
-app.include_router(getmusic_router)
+app.include_router(basicpitch_router.router)
+app.include_router(getmusic_router.router)

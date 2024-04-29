@@ -5,7 +5,7 @@ import os
 import numpy as np
 import datetime
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, APIRouter
 import torch
 
 from models.track_generation import tokens_to_ids, ids_to_tokens, empty_index, pad_index
@@ -41,7 +41,9 @@ def load_parameters():
 
 
     seed_everything(args.seed, args.cudnn_deterministic)
-    # torch.cuda.set_device(0)
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    torch.cuda.set_device(device)
+    args.local_rank = 0
     args.ngpus_per_node = args.world_size = args.local_rank = args.node_rank = 1
     args.global_rank = args.local_rank + args.node_rank * args.ngpus_per_node
     args.distributed = args.world_size > 1
@@ -121,7 +123,7 @@ async def generate_music(data, solver):
 
 
 # initialize router
-get_music_router = FastAPI()
+router = APIRouter()
 
 # Load parameters and configuration
 args = load_parameters()
@@ -142,7 +144,7 @@ tokens_to_ids, ids_to_tokens = load_tokens_from_file(vocab_file_path)
 pad_index = get_pad_index(tokens_to_ids)
 empty_index = get_empty_index(ids_to_tokens)
 
-@get_music_router.post('/generate_music')
+@router.post('/generate_music', tags=['getmusic'])
 async def generate_music(data: GetMusicInput):
     return await generate_music(data, solver)
 

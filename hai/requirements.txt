@@ -1,0 +1,15 @@
+uvicorn
+fastapi
+pyyaml
+boto3
+pretty_midi
+miditoolkit
+tensorboard
+tqdm
+torch==2.3.0+cu118
+torchvision==0.18.0+cu118
+torchaudio==2.3.0+cu118
+-f https://download.pytorch.org/whl/cu118
+transformers
+einops
+basic-pitch
