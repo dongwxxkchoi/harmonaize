@@ -4,6 +4,7 @@ from typing import List
 # BasicPitch
 class BasicPitchInputCreate(BaseModel):
     instrument: int
+    file_path: str
 
 # GETMusic
 class GetMusicInput(BaseModel):

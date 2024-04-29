@@ -146,5 +146,7 @@ empty_index = get_empty_index(ids_to_tokens)
 
 @router.post('/generate_music', tags=['getmusic'])
 async def generate_music(data: GetMusicInput):
-    return await generate_music(data, solver)
+    print("generating music")
+    return 1
+    # return await generate_music(data, solver)
 
