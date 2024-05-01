@@ -1,13 +1,24 @@
 from pydantic import BaseModel
 from typing import List
 
+class GenerationInput(BaseModel):
+    s3_url: str
+    user: str
+    instrument: str
+    content_name: str
+
+
 # BasicPitch
 class BasicPitchInputCreate(BaseModel):
-    instrument: int
     file_path: str
+    instrument: str
+
 
 # GETMusic
 class GetMusicInput(BaseModel):
+    conditional_name: str
+    content_name: str
+
+# GETMusic
+class GetMusicOutput(BaseModel):
     file_path: str
-    conditional_track: List[int]
-    content_track: List[int]

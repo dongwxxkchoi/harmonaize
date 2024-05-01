@@ -4,11 +4,11 @@ from basic_pitch.inference import predict, Model
 from basic_pitch import ICASSP_2022_MODEL_PATH
 from typing import List
 
-class WavToMIDIModel:
+class Mp3ToMIDIModel:
     def __init__(self):
         self.model = Model(model_path = ICASSP_2022_MODEL_PATH)
     
-    def pred(self, audio_path: str, parameters: List[float]):        
+    async def pred(self, audio_path: str, parameters: List[float]):
         model_output, midi_data, note_events = predict(
             audio_path=audio_path,
             model_or_model_path=self.model,

@@ -591,25 +591,49 @@ def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_
 
     return datum.unsqueeze(0), torch.tensor(tempo), not_empty_pos, conditional_bool, pitch_shift, tpc, have_cond
 
-def parse_condition_inst(conditional_track: List[bool]):
-    
+def parse_condition(conditional_name: str):
+    conditional_track = np.array([False, False, False, False, False, False, True])
     condition_inst = []
-    for i, track in enumerate(conditional_track):
-        if track:
-            if i == 0:
-                condition_inst.append('80')
-            if i == 1:
-                condition_inst.append('32')
-            if i == 2:
-                condition_inst.append('128')
-            if i == 3:
-                condition_inst.append('25')
-            if i == 4:
-                condition_inst.append('0')
-            if i == 5:
-                condition_inst.append('48')
-    
-    return condition_inst
+    if 'l' in conditional_name:
+        conditional_track[0] = True
+        condition_inst.append('80')
+    if 'b' in conditional_name:
+        conditional_track[1] = True
+        condition_inst.append('32')
+    if 'd' in conditional_name:
+        conditional_track[2] = True
+    if 'g' in conditional_name:
+        conditional_track[3] = True
+        condition_inst.append('25')
+    if 'p' in conditional_name:
+        conditional_track[4] = True
+        condition_inst.append('0')
+    if 's' in conditional_name:
+        conditional_track[5] = True
+        condition_inst.append('48')
+    # if 'c' in conditional_name:
+    #     conditional_track[6] = True
+
+    return conditional_track, condition_inst
+
+# lbd
+def parse_content(content_name: str):
+    content_track = np.array([False, False, False, False, False, False, False])
+    if 'l' in content_name:
+        content_track[0] = True
+    if 'b' in content_name:
+        content_track[1] = True
+    if 'd' in content_name:
+        content_track[2] = True
+    if 'g' in content_name:
+        content_track[3] = True
+    if 'p' in content_name:
+        content_track[4] = True
+    if 's' in content_name:
+        content_track[5] = True
+
+    return content_track
+
 
 def process_octuple_midi(oct_line: str, pitch_shift: int):
     data = oct_line.split(' ')
