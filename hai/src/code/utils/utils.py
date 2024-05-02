@@ -6,10 +6,23 @@ import requests
 import re
 
 import boto3
+from botocore.exceptions import ClientError
+
 import pretty_midi
 
 # 0. 환경설정 parameter들
-AWS_BUCKET = "for-capstone-test"
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+config_file_path = os.path.join(current_dir, '../../../..', 'configs', 'config.json')
+    
+with open(config_file_path, 'r') as f:
+    config = json.load(f)
+    
+AWS_ACCESS_KEY_ID = config['AWS_ACCESS_KEY_ID']
+AWS_SECRET_ACCESS_KEY = config['AWS_SECRET_ACCESS_KEY']
+BUCKET_NAME = config['BUCKET_NAME']
+FOLDER_NAME = config['FOLDER_NAME']
+
 
 def download_from_s3(bucket_name: str, local_file_name: str, key: str):    
     s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
@@ -38,6 +51,38 @@ def get_file_path_from_s3_url(s3_url: str):
     file_path = s3_url.split('/')[-1]
     return os.path.basename(file_path)
 
+def get_s3_client():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_file_path = os.path.join(current_dir, '../../../..', 'configs', 'config.json')
+    
+    with open(config_file_path, 'r') as f:
+        config = json.load(f)
+    
+    s3_client = boto3.client('s3',
+                             aws_access_key_id=config['AWS_ACCESS_KEY_ID'],
+                             aws_secret_access_key=config['AWS_SECRET_ACCESS_KEY'])
+    
+    return s3_client
+
+def make_s3_folder(s3_client: boto3.client, user: str):
+
+    try:
+        # 해당 경로의 객체를 가져와서 예외가 발생하지 않으면 폴더가 이미 존재한다는 것
+        s3_client.head_object(Bucket=BUCKET_NAME, Key=(FOLDER_NAME+user+'/'))
+        print("created!")
+    except ClientError as e:
+        # 폴더가 없는 경우에만 폴더 생성
+        if e.response['Error']['Code'] == '404':
+            s3_client.put_object(Bucket=BUCKET_NAME, Key=(FOLDER_NAME+user+'/'))
+            print(f"{BUCKET_NAME} 버킷에 {FOLDER_NAME+user} 폴더가 생성되었습니다.")
+        else:
+            # 다른 에러인 경우 예외 발생
+            raise
+    else:
+        print(f"{BUCKET_NAME} 버킷에 {FOLDER_NAME+user} 폴더는 이미 존재합니다.")
+    
+    return FOLDER_NAME+user+'/'
+
 def make_and_get_user_folder(file_name: str, user: str):
     data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data'))
     user_folder = os.path.join(data_path, user)
@@ -53,11 +98,14 @@ def make_and_get_user_folder_path(user: str):
 
     return user_folder
 
-def upload_to_s3(bucket_name: str, local_file_name: str, key: str):
+def upload_to_s3(local_file_name: str, key: str):
     s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
-    res = s3_client.upload_file(local_file_name, bucket_name, key)
+    res = s3_client.upload_file(local_file_name, BUCKET_NAME, key)
 
-    return res
+    # s3_client.put_object_acl(ACL='public-read', Bucket=BUCKET_NAME, Key=key)
+    object_url = f"https://{BUCKET_NAME}.s3.ap-northeast-2.amazonaws.com/{key}"
+    
+    return object_url
 
 
 def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):

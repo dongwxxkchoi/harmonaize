@@ -24,7 +24,7 @@ from models.getmusic.modeling.build import build_model
 from models.initializing import initialize
 
 from utils.utils import load_yaml_config, load_json_params, download_from_s3, upload_to_s3
-from utils.utils import change_instrument, download_from_s3_requests, get_file_path_from_s3_url, make_and_get_user_folder, make_and_get_user_folder_path
+from utils.utils import change_instrument, download_from_s3_requests, get_file_path_from_s3_url, make_and_get_user_folder, get_s3_client, make_s3_folder
 
 import datetime
 import pickle
@@ -148,3 +148,11 @@ async def start_generation(input: GenerationInput):
     midi_obj = encoding_to_MIDI(oct_final, tpc, args.decode_chord)
     generated_midi_file_path = f"{mp3_file_path.split('.')[0]}_generated.mid"
     midi_obj.dump(generated_midi_file_path)
+    
+    s3_client = get_s3_client()
+    folder_path = make_s3_folder(s3_client=s3_client, user=input.user)
+    print(f"folder_path{mp3_file_name.split('.')[0]}_generated.mid")
+    s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
+                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated.mid")
+    
+    return {"status": "200", "url": s3_url}
