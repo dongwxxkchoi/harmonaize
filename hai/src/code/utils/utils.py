@@ -46,6 +46,13 @@ def make_and_get_user_folder(file_name: str, user: str):
 
     return file_path
 
+def make_and_get_user_folder_path(user: str):
+    data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
+    user_folder = os.path.join(data_path, user)
+    os.makedirs(user_folder, exist_ok=True)
+
+    return user_folder
+
 def upload_to_s3(bucket_name: str, local_file_name: str, key: str):
     s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     res = s3_client.upload_file(local_file_name, bucket_name, key)
