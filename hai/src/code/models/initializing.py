@@ -102,4 +102,4 @@ def initialize():
     pad_index = get_pad_index(tokens_to_ids)
     empty_index = get_empty_index(ids_to_tokens)
 
-    return args, Logger, solver, pad_index, empty_index
+    return args, Logger, solver, tokens_to_ids, ids_to_tokens, pad_index, empty_index

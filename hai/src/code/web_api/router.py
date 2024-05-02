@@ -26,26 +26,108 @@ from models.initializing import initialize
 from utils.utils import load_yaml_config, load_json_params, download_from_s3, upload_to_s3
 from utils.utils import change_instrument, download_from_s3_requests, get_file_path_from_s3_url, make_and_get_user_folder, make_and_get_user_folder_path
 
+import datetime
+import pickle
+import miditoolkit
+from models.getmusic.utils.midi_config import *
+from models.getmusic.utils.magenta_chord_recognition import infer_chords_for_sequence, _key_chord_distribution,\
+    _key_chord_transition_distribution, _CHORDS, _PITCH_CLASS_NAMES, NO_CHORD
+
+NODE_RANK = os.environ['INDEX'] if 'INDEX' in os.environ else 0
+NODE_RANK = int(NODE_RANK)
+MASTER_ADDR, MASTER_PORT = (os.environ['CHIEF_IP'], 22275) if 'CHIEF_IP' in os.environ else ("127.0.0.1", 29500)
+MASTER_PORT = int(MASTER_PORT)
+DIST_URL = 'tcp://%s:%s' % (MASTER_ADDR, MASTER_PORT)
+NUM_NODE = os.environ['HOST_NUM'] if 'HOST_NUM' in os.environ else 1
+
+inst_to_row = { '80':0, '32':1, '128':2,  '25':3, '0':4, '48':5, '129':6}
+prog_to_abrv = {'0':'P','25':'G','32':'B','48':'S','80':'M','128':'D'}
+track_name = ['lead', 'bass', 'drum', 'guitar', 'piano', 'string']
+
+root_dict = {'C': 0, 'C#': 1, 'D': 2, 'Eb': 3, 'E': 4, 'F': 5, 'F#': 6, 'G': 7, 'Ab': 8, 'A': 9, 'Bb': 10, 'B': 11}
+kind_dict = {'null': 0, 'm': 1, '+': 2, 'dim': 3, 'seven': 4, 'maj7': 5, 'm7': 6, 'm7b5': 7}
+root_list = list(root_dict.keys())
+kind_list = list(kind_dict.keys())
+
+_CHORD_KIND_PITCHES = {
+    'null': [0, 4, 7],
+    'm': [0, 3, 7],
+    '+': [0, 4, 8],
+    'dim': [0, 3, 6],
+    'seven': [0, 4, 7, 10],
+    'maj7': [0, 4, 7, 11],
+    'm7': [0, 3, 7, 10],
+    'm7b5': [0, 3, 6, 10],
+}
+
+ts_dict = dict()
+ts_list = list()
+for i in range(0, max_ts_denominator + 1):  # 1 ~ 64
+    for j in range(1, ((2 ** i) * max_notes_per_bar) + 1):
+        ts_dict[(j, 2 ** i)] = len(ts_dict)
+        ts_list.append((j, 2 ** i))
+dur_enc = list()
+dur_dec = list()
+for i in range(duration_max):
+    for j in range(pos_resolution):
+        dur_dec.append(len(dur_enc))
+        for k in range(2 ** i):
+            dur_enc.append(len(dur_dec) - 1)
+
+tokens_to_ids = {}
+ids_to_tokens = []
+pad_index = None
+empty_index = None
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(current_dir, '../models/getmusic/utils/key_profile.pickle')
+key_profile = pickle.load(open(file_path, 'rb'))
+
+pos_in_bar = beat_note_factor * max_notes_per_bar * pos_resolution
+
+
+chord_pitch_out_of_key_prob = 0.01
+key_change_prob = 0.001
+chord_change_prob = 0.5
+key_chord_distribution = _key_chord_distribution(
+    chord_pitch_out_of_key_prob=chord_pitch_out_of_key_prob)
+key_chord_loglik = np.log(key_chord_distribution)
+key_chord_transition_distribution = _key_chord_transition_distribution(
+    key_chord_distribution,
+    key_change_prob=key_change_prob,
+    chord_change_prob=chord_change_prob)
+key_chord_transition_loglik = np.log(key_chord_transition_distribution)
+
+
+
+
+
 router = APIRouter()
 mp3_to_midi = Mp3ToMIDIModel()
-args, Logger, solver, pad_index, empty_index = initialize()
+args, Logger, solver, tokens_to_ids, ids_to_tokens, pad_index, empty_index = initialize()
 
 
 @router.post("/start_generation/")
-async def start_generation(data: GenerationInput):
-    mp3_file_name = get_file_path_from_s3_url(s3_url=data.s3_url)
-    mp3_file_path = make_and_get_user_folder(file_name=mp3_file_name, user=data.user)    
-
-    download_from_s3_requests(s3_url=data.s3_url,
+async def start_generation(input: GenerationInput):
+    mp3_file_name = get_file_path_from_s3_url(s3_url=input.s3_url)
+    mp3_file_path = make_and_get_user_folder(file_name=mp3_file_name, user=input.user)    
+    
+    download_from_s3_requests(s3_url=input.s3_url,
                               local_file_path=mp3_file_path)
     
-    Mp3ToMIDIModel.pred_and_save(audio_path=mp3_file_path,
-                                 output_directory=make_and_get_user_folder_path(user=data.user))
-
+    model_output, midi_data, note_events = mp3_to_midi.pred(audio_path=mp3_file_path, parameters=[1])
+    processed_midi_data = change_instrument(instrument=input.instrument,
+                                            midi_object=midi_data)
+    midi_file_path = f"{mp3_file_path.split('.')[0]}.mid"
+    processed_midi_data.write(midi_file_path)
+    
     # Generate Music - preprocessing
-    conditional_track, condition_inst = parse_condition(data.instrument)
-    content_track = parse_content(data.content_name)
-    x, tempo, not_empty_pos, condition_pos, pitch_shift, tpc, have_cond = F(mp3_file_name, conditional_track, content_track, condition_inst, args.chord_from_single)
+    conditional_track, condition_inst = parse_condition(input.instrument)
+    content_track = parse_content(input.content_name)
+    
+    x, tempo, not_empty_pos, condition_pos, pitch_shift, tpc, have_cond = F(midi_file_path, conditional_track, content_track, 
+                                                                            condition_inst, args.chord_from_single, tokens_to_ids,
+                                                                            ids_to_tokens, empty_index, pad_index)
 
     # Generate Music - inference
     oct_line = solver.infer_sample(x, tempo, not_empty_pos, condition_pos, use_ema=args.no_ema)
@@ -64,18 +146,5 @@ async def start_generation(data: GenerationInput):
 
     oct_final = ' '.join(oct_final_list)
     midi_obj = encoding_to_MIDI(oct_final, tpc, args.decode_chord)
-    os.path.join(make_and_get_user_folder_path(user=data.user), mp3_file_name.split('.')[0])
-    midi_obj.dump()
-    save_path = os.path.join(args.file_path, '{}2{}-{}'.format(conditional_name, content_name, file_name.split('/')[-1]))
-    midi_obj.dump(save_path)
-    
-
-    
-
-    
-
-class GenerationInput():
-    s3_url: str
-    user: str
-    instrument: str
-    content_name: str
+    generated_midi_file_path = f"{mp3_file_path.split('.')[0]}_generated.mid"
+    midi_obj.dump(generated_midi_file_path)

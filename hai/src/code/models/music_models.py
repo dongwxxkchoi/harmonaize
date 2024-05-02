@@ -20,11 +20,13 @@ class Mp3ToMIDIModel:
         return model_output, midi_data, note_events
     
     def pred_and_save(self, audio_path: str, output_directory: str, parameters: List[float]=None):
-        
         predict_and_save(
-            audio_path=audio_path,
-            output_directory="s",
+            audio_path_list=[audio_path],
+            output_directory=output_directory,
             save_midi=True,
+            sonify_midi=False,
+            save_model_outputs=False,
+            save_notes=False,
             model_or_model_path=self.model,
             onset_threshold=0.25,
             frame_threshold=0.25,

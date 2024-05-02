@@ -39,7 +39,7 @@ def get_file_path_from_s3_url(s3_url: str):
     return os.path.basename(file_path)
 
 def make_and_get_user_folder(file_name: str, user: str):
-    data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
+    data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data'))
     user_folder = os.path.join(data_path, user)
     os.makedirs(user_folder, exist_ok=True)
     file_path = os.path.join(user_folder, file_name)
@@ -47,7 +47,7 @@ def make_and_get_user_folder(file_name: str, user: str):
     return file_path
 
 def make_and_get_user_folder_path(user: str):
-    data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data'))
+    data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data'))
     user_folder = os.path.join(data_path, user)
     os.makedirs(user_folder, exist_ok=True)
 
@@ -60,12 +60,20 @@ def upload_to_s3(bucket_name: str, local_file_name: str, key: str):
     return res
 
 
-def change_instrument(instrument: int, midi_object: pretty_midi.PrettyMIDI):
+def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):
+    if instrument == "p":
+        instrument_no = 0
+    elif instrument == "g":
+        instrument_no = 25
+    elif instrument == "b":
+        instrument_no = 32
+        
     if len(midi_object.instruments) == 1:
-        midi_object.instruments[0].program = instrument
+        midi_object.instruments[0].program = instrument_no
     else:
         pass
 
+    print("instrument changed")
     return midi_object
 
 
