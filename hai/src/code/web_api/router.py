@@ -2,6 +2,7 @@ import sys
 import os
 import datetime
 import json
+import subprocess
 from typing import List, Union
 from argparse import Namespace
 
@@ -99,10 +100,6 @@ key_chord_transition_distribution = _key_chord_transition_distribution(
     chord_change_prob=chord_change_prob)
 key_chord_transition_loglik = np.log(key_chord_transition_distribution)
 
-
-
-
-
 router = APIRouter()
 mp3_to_midi = Mp3ToMIDIModel()
 args, Logger, solver, tokens_to_ids, ids_to_tokens, pad_index, empty_index = initialize()
@@ -181,6 +178,16 @@ async def start_generation(input: GenerationInput):
     s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
                           key=f"{folder_path}{mp3_file_name.split('.')[0]}_fin.mid")
     
+    ### 8-3. mp3 변환
+    def convert_midi_to_mp3(input_midi, output_mp3):
+        subprocess.run(['timidity', input_midi, '-0w', '-o', 'output.wav'])
+        subprocess.run(['lame', 'output.wav', output_mp3])
+    
+    output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove_fin.mp3"
+    convert_midi_to_mp3(generated_midi_file_path, output_path)
+    s3_url = upload_to_s3(local_file_name=output_path,
+                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated.mp3")
+
     ### 8-3. mix with original
     # file_path = output_path
     # output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove_fin.mid"
