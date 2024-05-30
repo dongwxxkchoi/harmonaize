@@ -23,8 +23,9 @@ from models.getmusic.engine.solver import Solver
 from models.getmusic.modeling.build import build_model
 from models.initializing import initialize
 
-from utils.utils import load_yaml_config, load_json_params, download_from_s3, upload_to_s3
-from utils.utils import change_instrument, download_from_s3_requests, get_file_path_from_s3_url, make_and_get_user_folder, get_s3_client, make_s3_folder
+# from utils.utils import load_yaml_config, load_json_params, download_from_s3, upload_to_s3
+# from utils.utils import change_instrument, download_from_s3_requests, get_file_path_from_s3_url, make_and_get_user_folder, get_s3_client, make_s3_folder
+from utils.utils import *
 
 import datetime
 import pickle
@@ -109,32 +110,39 @@ args, Logger, solver, tokens_to_ids, ids_to_tokens, pad_index, empty_index = ini
 
 @router.post("/start_generation/")
 async def start_generation(input: GenerationInput):
+
+    # 1. mp3 파일 설정 및 다운로드 수행
     mp3_file_name = get_file_path_from_s3_url(s3_url=input.s3_url)
     mp3_file_path = make_and_get_user_folder(file_name=mp3_file_name, user=input.user)    
     
     download_from_s3_requests(s3_url=input.s3_url,
                               local_file_path=mp3_file_path)
     
+    # 2. mp3 -> midi 예측 수행
     model_output, midi_data, note_events = mp3_to_midi.pred(audio_path=mp3_file_path, parameters=[1])
+    
+    # 3. instrument 변경
     processed_midi_data = change_instrument(instrument=input.instrument,
                                             midi_object=midi_data)
-    midi_file_path = f"{mp3_file_path.split('.')[0]}.mid"
+    ### 3-1. 원본
+    midi_file_path_1 = f"{mp3_file_path.split('.')[0]}_before.mid"
+    midi_data.write(midi_file_path_1)
+    ### 3-2. 변경본
+    midi_file_path = f"{mp3_file_path.split('.')[0]}_after.mid"
     processed_midi_data.write(midi_file_path)
     
-    # Generate Music - preprocessing
+    # 4. condition / midi parsing
     conditional_track, condition_inst = parse_condition(input.instrument)
     content_track = parse_content(input.content_name)
-    
     x, tempo, not_empty_pos, condition_pos, pitch_shift, tpc, have_cond = F(midi_file_path, conditional_track, content_track, 
                                                                             condition_inst, args.chord_from_single, tokens_to_ids,
                                                                             ids_to_tokens, empty_index, pad_index)
 
-    # Generate Music - inference
+    # 5. inference
     oct_line = solver.infer_sample(x, tempo, not_empty_pos, condition_pos, use_ema=args.no_ema)
 
-    # Generate Music - post processing
+    # 6. encoding
     data = oct_line.split(' ')
-
     oct_final_list = []
     for start in range(3, len(data),8):
         if 'pad' not in data[start] and 'pad' not in data[start+1]:
@@ -143,16 +151,47 @@ async def start_generation(input: GenerationInput):
                 pitch -= pitch_shift
             data[start] = '<3-{}>'.format(pitch) # re-normalize            
             oct_final_list.append(' '.join(data[start-3:start+5]))
-
     oct_final = ' '.join(oct_final_list)
     midi_obj = encoding_to_MIDI(oct_final, tpc, args.decode_chord)
+
+    # 7. storing files
     generated_midi_file_path = f"{mp3_file_path.split('.')[0]}_generated.mid"
     midi_obj.dump(generated_midi_file_path)
-    
+
     s3_client = get_s3_client()
     folder_path = make_s3_folder(s3_client=s3_client, user=input.user)
-    print(f"folder_path{mp3_file_name.split('.')[0]}_generated.mid")
+    s3_url = upload_to_s3(local_file_name=midi_file_path_1,
+                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_origin_before.mid")
+    s3_url = upload_to_s3(local_file_name=midi_file_path,
+                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_origin_after.mid")
     s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
                           key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated.mid")
+
+    # 8. midi post processing
+    ### 8-1. sync
+    output_path = f"{mp3_file_path.split('.')[0]}_generated_sync.mid"
+    change_tempo_of_midi(original_file_path=midi_file_path, generated_file_path=generated_midi_file_path, output_path=output_path)
+    s3_url = upload_to_s3(local_file_name=output_path,
+                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated_sync.mid")
+    
+    ### 8-2. remove the created
+    file_path = generated_midi_file_path
+    output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove.mid"
+    remove_instrument_events(file_path, input.instrument, output_path)
+    s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
+                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_fin.mid")
+    
+    ### 8-3. mix with original
+    # file_path = output_path
+    # output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove_fin.mid"
+    # # 3. mix with the origin
+    # merge_midi_files(midi_file_path, file_path, output_path)
+    # s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
+    #                       key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated_sync_remove_fin.mid")
+    
+    # folder_path = make_s3_folder(s3_client=s3_client, user=input.user)
+    # print(f"folder_path{mp3_file_name.split('.')[0]}_generated.mid")
+    # s3_url = upload_to_s3(local_file_name=output_path,
+    #                       key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated.mid")
     
     return {"status": "200", "url": s3_url}

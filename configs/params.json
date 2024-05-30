@@ -3,7 +3,7 @@
     "name": "inference_cache", 
     "output": "cache", 
     "tensorboard": true,
-    "load_path": "checkpoint/checkpoint.pth",
+    "load_path": "configs/checkpoint.pth",
     "num_node": 1,
     "ngpus_per_node": 8,
     "node_rank": 5,

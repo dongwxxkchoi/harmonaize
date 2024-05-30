@@ -12,9 +12,9 @@ class Mp3ToMIDIModel:
         model_output, midi_data, note_events = predict(
             audio_path=audio_path,
             model_or_model_path=self.model,
-            onset_threshold=0.25,
-            frame_threshold=0.25,
-            minimum_note_length=70
+            onset_threshold=0.7,
+            frame_threshold=0.5,
+            minimum_note_length=150
         )
 
         return model_output, midi_data, note_events

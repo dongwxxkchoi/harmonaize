@@ -573,8 +573,8 @@ def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_
     datum = torch.where(empty_pos, empty_index, datum)
     datum = torch.where(((datum != empty_index).float() * (1 - conditional_bool)).type(torch.bool), empty_index + 1, datum)
 
-    # datum = datum[:,:1280]
-    # conditional_bool = conditional_bool[:,:1280]
+    # datum = datum[:,:1024]
+    # conditional_bool = conditional_bool[:,:1024]
 
     # if trunc:
     datum = datum[:,:512]

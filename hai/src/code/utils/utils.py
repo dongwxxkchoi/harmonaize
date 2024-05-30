@@ -4,7 +4,7 @@ import yaml
 import json
 import requests
 import re
-
+import mido
 import boto3
 from botocore.exceptions import ClientError
 
@@ -30,10 +30,27 @@ def download_from_s3(bucket_name: str, local_file_name: str, key: str):
 
     return res
 
+# def download_from_s3_requests(s3_url: str, local_file_path: str):
+#     response = requests.get(s3_url)
+#     with open(local_file_path, 'wb') as f:
+#         f.write(response.content)
+
+#     return os.path.exists(local_file_path)
+
 def download_from_s3_requests(s3_url: str, local_file_path: str):
-    response = requests.get(s3_url)
-    with open(local_file_path, 'wb') as f:
-        f.write(response.content)
+    try:
+        response = requests.get(s3_url)
+        response.raise_for_status()  # 요청이 실패했을 경우 예외 발생
+    except requests.exceptions.RequestException as e:
+        print(f"Error downloading from S3: {e}")
+        return False  # 다운로드 실패를 나타내는 값 반환
+
+    try:
+        with open(local_file_path, 'wb') as f:
+            f.write(response.content)
+    except IOError as e:
+        print(f"Error writing to local file: {e}")
+        return False  # 파일 쓰기 실패를 나타내는 값 반환
 
     return os.path.exists(local_file_path)
 
@@ -98,14 +115,35 @@ def make_and_get_user_folder_path(user: str):
 
     return user_folder
 
-def upload_to_s3(local_file_name: str, key: str):
-    s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
-    res = s3_client.upload_file(local_file_name, BUCKET_NAME, key)
+# def upload_to_s3(local_file_name: str, key: str):
+#     s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+#     res = s3_client.upload_file(local_file_name, BUCKET_NAME, key)
 
-    # s3_client.put_object_acl(ACL='public-read', Bucket=BUCKET_NAME, Key=key)
-    object_url = f"https://{BUCKET_NAME}.s3.ap-northeast-2.amazonaws.com/{key}"
+#     # s3_client.put_object_acl(ACL='public-read', Bucket=BUCKET_NAME, Key=key)
+#     object_url = f"https://{BUCKET_NAME}.s3.ap-northeast-2.amazonaws.com/{key}"
     
-    return object_url
+#     return object_url
+
+def upload_to_s3(local_file_name: str, key: str):
+    try:
+        s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+        s3_client.upload_file(local_file_name, BUCKET_NAME, key)
+
+        # 권한 설정을 위한 코드 (선택 사항)
+        # s3_client.put_object_acl(ACL='public-read', Bucket=BUCKET_NAME, Key=key)
+        
+        object_url = f"https://{BUCKET_NAME}.s3.ap-northeast-2.amazonaws.com/{key}"
+        return object_url
+
+    except ClientError as e:
+        # 업로드 중에 발생한 클라이언트 오류 처리
+        print(f"Error uploading to S3: {e}")
+        return None
+
+    except Exception as e:
+        # 기타 예외 처리
+        print(f"Unexpected error uploading to S3: {e}")
+        return None
 
 
 def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):
@@ -115,6 +153,8 @@ def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):
         instrument_no = 25
     elif instrument == "b":
         instrument_no = 32
+    elif instrument == "l":
+        instrument_no = 80
         
     if len(midi_object.instruments) == 1:
         midi_object.instruments[0].program = instrument_no
@@ -123,9 +163,6 @@ def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):
 
     print("instrument changed")
     return midi_object
-
-
-
 
 def load_yaml_config(path):
     with open(path) as f:
@@ -154,3 +191,116 @@ def merge_opts_to_config(config, opts):
             config = modify_dict(config, name.split('.'), value)
     return config 
 
+
+def get_tempo(midi_file):
+    for track in midi_file.tracks:
+        for msg in track:
+            if msg.type == 'set_tempo':
+                return msg.tempo
+    return 500000
+
+
+def set_tempo(midi_file, new_tempo):
+    for track in midi_file.tracks:
+        for msg in track:
+            if msg.type == 'set_tempo':
+                msg.tempo = new_tempo
+
+def change_tempo_of_midi(original_file_path, generated_file_path, output_path):
+    # Load the MIDI files
+    midi1 = mido.MidiFile(original_file_path)
+    midi2 = mido.MidiFile(generated_file_path)
+    
+    # Get the tempo from the first MIDI file
+    tempo = get_tempo(midi1)
+    print("original tempo: ", tempo)
+    
+    # Set the tempo for the second MIDI file
+    print("generated tempo: ", get_tempo(midi2))
+    set_tempo(midi2, tempo)
+    print("changed tempo: ", get_tempo(midi2))
+    
+    # Save the modified second MIDI file
+    midi2.save(output_path)
+    print(f"Tempo of the second MIDI file has been set to match the first MIDI file and saved as {output_path}")
+
+def merge_midi_files(original_file_path, generated_file_path, output_file):
+    # 첫 번째 MIDI 파일 로드
+    midi1 = mido.MidiFile(original_file_path)
+    # 두 번째 MIDI 파일 로드
+    midi2 = mido.MidiFile(generated_file_path)
+    
+    for track in midi2.tracks:
+        midi1.tracks.append(track)
+
+    # 병합된 MIDI 파일 저장
+    midi1.save(output_file)
+
+def remove_instrument_events(midi_file_path, instrument, output_path):
+    # 특정 악기 이벤트를 제거할 새로운 MIDI 파일 객체 생성
+    new_midi = mido.MidiFile()
+    midi = mido.MidiFile(midi_file_path)
+
+    if instrument == 'p':
+        instrument_num = 0
+    elif instrument == 'g':
+        instrument_num = 25
+    elif instrument == 'b':
+        instrument_num = 32
+    elif instrument == 's':
+        instrument_num = 48
+    elif instrument == 'l':
+        instrument_num = 80
+
+    remove_flag = False
+
+    # 입력 MIDI 파일의 각 트랙을 순회하면서 필요한 악기 이벤트를 제거하고 새로운 MIDI 파일에 추가
+    for track in midi.tracks:
+        new_track = mido.MidiTrack()
+        for msg in track:
+            # 프로그램 변경 이벤트(악기 변경)를 찾아 해당 악기 이벤트를 제거하거나 볼륨을 0으로 설정
+            if isinstance(msg,mido.messages.messages.Message):
+                if msg.type == 'program_change':
+                    if instrument == 'p' and msg.channel == 0 and msg.program == instrument_num:
+                        remove_flag = True
+                    elif msg.program == instrument_num:
+                        remove_flag=True
+                    else:
+                        remove_flag=False
+
+            if remove_flag:
+                continue
+            else:
+                new_track.append(msg)
+                
+        new_midi.tracks.append(new_track)
+
+    new_midi.save(output_path)
+    
+
+def process_instrument_train(midi_file):
+    # 0 - 7, 16 - 23 -> Piano
+    # 24 - 31 -> Guitar
+    # 32 - 39 -> Bass
+    # 40 - 47 -> Strings
+    # 112 - 119 -> Drum
+
+    new_midi = mido.MidiFile()
+    
+    for i, track in enumerate(midi_file.tracks):
+        if i != track_number:  # 트랙 번호가 일치하지 않으면 무시하고 다음 트랙으로 이동
+            new_midi.tracks.append(track)
+            continue
+        
+        # 특정 트랙의 악기가 주어진 범위에 속하는지 확인
+        keep_track = False
+        for msg in track:
+            if msg.type == 'program_change':
+                if min_program <= msg.program <= max_program:
+                    keep_track = True
+                    break
+        
+        if keep_track:
+            new_midi.tracks.append(track)
+    
+    return new_midi
