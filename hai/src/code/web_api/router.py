@@ -180,7 +180,7 @@ async def start_generation(input: GenerationInput):
     
     ### 8-3. mp3 변환
     def convert_midi_to_mp3(input_midi, output_mp3):
-        subprocess.run(['timidity', input_midi, '-0w', '-o', 'output.wav'])
+        subprocess.run(['timidity', input_midi, '-Ow', '-o', 'output.wav'])
         subprocess.run(['lame', 'output.wav', output_mp3])
     
     output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove_fin.mp3"
