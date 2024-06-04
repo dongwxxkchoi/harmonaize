@@ -9,7 +9,7 @@ from argparse import Namespace
 import miditoolkit
 import numpy as np
 
-from fastapi import FastAPI, APIRouter, Response, HTTPException
+from fastapi import FastAPI, APIRouter, Response, HTTPException, Request
 from fastapi.responses import JSONResponse
 import torch
 
@@ -104,11 +104,15 @@ router = APIRouter()
 mp3_to_midi = Mp3ToMIDIModel()
 args, Logger, solver, tokens_to_ids, ids_to_tokens, pad_index, empty_index = initialize()
 
-
+# mp3 input, midi input 나눠서
 @router.post("/start_generation/")
-async def start_generation(input: GenerationInput):
+async def start_generation(json_input: Request):
 
     # 1. mp3 파일 설정 및 다운로드 수행
+    body = await json_input.body()
+    body_dict = json.loads(body)
+    input = GenerationInput(**body_dict)
+    
     mp3_file_name = get_file_path_from_s3_url(s3_url=input.s3_url)
     mp3_file_path = make_and_get_user_folder(file_name=mp3_file_name, user=input.user)    
     
