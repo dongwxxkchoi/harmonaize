@@ -6,6 +6,8 @@ import requests
 import re
 import mido
 import boto3
+import librosa
+
 from botocore.exceptions import ClientError
 
 import pretty_midi
@@ -264,9 +266,9 @@ def remove_instrument_events(midi_file_path, instrument, output_path):
                     if instrument == 'p' and msg.channel == 0 and msg.program == instrument_num:
                         remove_flag = True
                     elif msg.program == instrument_num:
-                        remove_flag=True
+                        remove_flag = True
                     else:
-                        remove_flag=False
+                        remove_flag = False
 
             if remove_flag:
                 continue
@@ -277,6 +279,10 @@ def remove_instrument_events(midi_file_path, instrument, output_path):
 
     new_midi.save(output_path)
     
+def extract_tempo(file_path: str):
+    y, sr = librosa.load(file_path)
+    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+    return tempo
 
 def process_instrument_train(midi_file):
     # 0 - 7, 16 - 23 -> Piano
