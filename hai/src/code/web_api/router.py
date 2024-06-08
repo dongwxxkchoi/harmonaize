@@ -18,14 +18,13 @@ from models.music_models import Mp3ToMIDIModel
 
 from models.track_generation import tokens_to_ids, ids_to_tokens, empty_index, pad_index
 from models.track_generation import F, encoding_to_MIDI, parse_condition, parse_content, process_octuple_midi
+
 from models.getmusic.utils.misc import seed_everything, merge_opts_to_config, modify_config_for_debug
 from models.getmusic.engine.logger import Logger
 from models.getmusic.engine.solver import Solver
 from models.getmusic.modeling.build import build_model
 from models.initializing import initialize
 
-# from utils.utils import load_yaml_config, load_json_params, download_from_s3, upload_to_s3
-# from utils.utils import change_instrument, download_from_s3_requests, get_file_path_from_s3_url, make_and_get_user_folder, get_s3_client, make_s3_folder
 from utils.utils import *
 
 import datetime
@@ -87,7 +86,6 @@ key_profile = pickle.load(open(file_path, 'rb'))
 
 pos_in_bar = beat_note_factor * max_notes_per_bar * pos_resolution
 
-
 chord_pitch_out_of_key_prob = 0.01
 key_change_prob = 0.001
 chord_change_prob = 0.5
@@ -108,30 +106,53 @@ args, Logger, solver, tokens_to_ids, ids_to_tokens, pad_index, empty_index = ini
 @router.post("/start_generation/")
 async def start_generation(json_input: Request):
 
-    # 1. mp3 파일 설정 및 다운로드 수행
+    # 1. audio 다운로드 수행
     body = await json_input.body()
     body_dict = json.loads(body)
     input = GenerationInput(**body_dict)
-    
-    mp3_file_name = get_file_path_from_s3_url(s3_url=input.s3_url)
-    mp3_file_path = make_and_get_user_folder(file_name=mp3_file_name, user=input.user)    
+
+    input_file_name = get_file_path_from_s3_url(s3_url=input.s3_url)
+    input_file_path = make_and_get_user_folder(file_name=input_file_name, user=input.user)    
     
     download_from_s3_requests(s3_url=input.s3_url,
-                              local_file_path=mp3_file_path)
+                              local_file_path=input_file_path)
     
     # 2. mp3 -> midi 예측 수행
-    model_output, midi_data, note_events = mp3_to_midi.pred(audio_path=mp3_file_path, parameters=[1])
-    
-    # 3. instrument 변경
+    if input_file_name.endswith('mid'):
+        midi_data = pretty_midi.PrettyMIDI(input_file_path)
+    else:
+        audio_file_path = make_audio_to_mp3(audio_path=input_file_path)
+        tempo = extract_tempo(file_path=audio_file_path)
+        key = extract_key(file_path=audio_file_path)
+
+        model_output, midi_data, note_events = mp3_to_midi.pred(audio_path=audio_file_path, tempo=tempo)
+        midi_file_path = f"{input_file_path.split('.')[0]}.mid"
+        midi_data.write(midi_file_path)
+        
+        change_tempo(midi_path=midi_file_path, tempo=tempo)
+        change_key_signature(midi_path=midi_file_path, key_signature=key)
+
+        
+        midi_data = mido.MidiFile(midi_file_path)
+        # 2-1. tempo, key, beat 등등 정보 추가
+
+    # 3. instrument 변경 (midi의 instrument 바꿔주기)
     processed_midi_data = change_instrument(instrument=input.instrument,
                                             midi_object=midi_data)
-    ### 3-1. 원본
-    midi_file_path_1 = f"{mp3_file_path.split('.')[0]}_before.mid"
-    midi_data.write(midi_file_path_1)
-    ### 3-2. 변경본
-    midi_file_path = f"{mp3_file_path.split('.')[0]}_after.mid"
+
+    # 4. 반주가 있는 경우는 반주 활용, 멜로디만 있는 경우는 멜로디 활용 반주 생성
+    # if 반주?:
+        # melody_path, accompaniment_path = separate_melody(midi_file_path)    
+    # else:
+        # make accompaniment
+    
+    ### 최종 저장
+    midi_file_path = f"{input_file_path.split('.')[0]}_after.mid"
     processed_midi_data.write(midi_file_path)
     
+    # preprocessing 라인 # 반주만 넣어주기
+    ###########################################################################################
+
     # 4. condition / midi parsing
     conditional_track, condition_inst = parse_condition(input.instrument)
     content_track = parse_content(input.content_name)
@@ -156,41 +177,47 @@ async def start_generation(json_input: Request):
     midi_obj = encoding_to_MIDI(oct_final, tpc, args.decode_chord)
 
     # 7. storing files
-    generated_midi_file_path = f"{mp3_file_path.split('.')[0]}_generated.mid"
+    generated_midi_file_path = f"{input_file_path.split('.')[0]}_generated.mid"
     midi_obj.dump(generated_midi_file_path)
 
     s3_client = get_s3_client()
     folder_path = make_s3_folder(s3_client=s3_client, user=input.user)
-    s3_url = upload_to_s3(local_file_name=midi_file_path_1,
-                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_origin_before.mid")
+    # s3_url = upload_to_s3(local_file_name=midi_file_path_1,
+    #                       key=f"{folder_path}{input_file_name.split('.')[0]}_origin_before.mid")
     s3_url = upload_to_s3(local_file_name=midi_file_path,
-                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_origin_after.mid")
+                          key=f"{folder_path}{input_file_name.split('.')[0]}_origin_after.mid")
     s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
-                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated.mid")
+                          key=f"{folder_path}{input_file_name.split('.')[0]}_generated.mid")
+
+    ####################################################################################################
+    # 멜로디와 합쳐주기
+    # 합쳐준 것 1개, 안 합친 것 1개
+    # 결과물 velocity 조절하기
+
 
     # 8. midi post processing
     ### 8-1. sync
-    output_path = f"{mp3_file_path.split('.')[0]}_generated_sync.mid"
+    output_path = f"{input_file_path.split('.')[0]}_generated_sync.mid"
     change_tempo_of_midi(original_file_path=midi_file_path, generated_file_path=generated_midi_file_path, output_path=output_path)
     s3_url = upload_to_s3(local_file_name=output_path,
-                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated_sync.mid")
+                          key=f"{folder_path}{input_file_name.split('.')[0]}_generated_sync.mid")
     
     ### 8-2. remove the created
     file_path = generated_midi_file_path
-    output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove.mid"
+    output_path = f"{input_file_path.split('.')[0]}_generated_sync_remove.mid"
     remove_instrument_events(file_path, input.instrument, output_path)
     s3_url = upload_to_s3(local_file_name=generated_midi_file_path,
-                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_fin.mid")
+                          key=f"{folder_path}{input_file_name.split('.')[0]}_fin.mid")
     
     ### 8-3. mp3 변환
     def convert_midi_to_mp3(input_midi, output_mp3):
         subprocess.run(['timidity', input_midi, '-Ow', '-o', 'output.wav'])
         subprocess.run(['lame', 'output.wav', output_mp3])
     
-    output_path = f"{mp3_file_path.split('.')[0]}_generated_sync_remove_fin.mp3"
+    output_path = f"{input_file_path.split('.')[0]}_generated_sync_remove_fin.mp3"
     convert_midi_to_mp3(generated_midi_file_path, output_path)
     s3_url = upload_to_s3(local_file_name=output_path,
-                          key=f"{folder_path}{mp3_file_name.split('.')[0]}_generated.mp3")
+                          key=f"{folder_path}{input_file_name.split('.')[0]}_generated.mp3")
 
     ### 8-3. mix with original
     # file_path = output_path

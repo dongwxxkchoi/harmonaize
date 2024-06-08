@@ -8,6 +8,9 @@ import mido
 import boto3
 import librosa
 
+import pydub
+from pydub import AudioSegment
+
 from botocore.exceptions import ClientError
 
 import pretty_midi
@@ -284,29 +287,101 @@ def extract_tempo(file_path: str):
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
     return tempo
 
-def process_instrument_train(midi_file):
-    # 0 - 7, 16 - 23 -> Piano
-    # 24 - 31 -> Guitar
-    # 32 - 39 -> Bass
-    # 40 - 47 -> Strings
-    # 112 - 119 -> Drum
+def make_audio_to_mp3(audio_path: str):
+    output_file_path = audio_path.split('.')[0] + ".mp3"
 
-    new_midi = mido.MidiFile()
+    audio = AudioSegment.from_file(audio_path)
+    audio.export(output_file_path, format="mp3")
+
+    return output_file_path
+
+def extract_key(audio_path: str):
+    # 오디오 파일을 로드합니다.
+    y, sr = librosa.load(audio_path)
     
-    for i, track in enumerate(midi_file.tracks):
-        if i != track_number:  # 트랙 번호가 일치하지 않으면 무시하고 다음 트랙으로 이동
-            new_midi.tracks.append(track)
-            continue
+    # 피치 클래스 (C, C#, D, D#, E, F, F#, G, G#, A, A#, B) 프로필을 추출합니다.
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    
+    # 각 피치 클래스의 평균 값을 계산합니다.
+    chroma_mean = chroma.mean(axis=1)
+    
+    # 가장 높은 값을 가진 피치 클래스를 찾습니다.
+    key_index = chroma_mean.argmax()
+    
+    # 피치 클래스에 해당하는 키를 정의합니다.
+    keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    
+    # 키를 반환합니다.
+    return keys[key_index]
+
+
+# audio 받았을 때 필요함
+def separate_melody(midi_path: str):
+    melody_track = mido.midifiles.tracks.MidiTrack()
+    accompaniment_track = mido.midifiles.tracks.MidiTrack()
+
+    for i, track in enumerate(mido.MidiFile(midi_path).tracks[1]):
+        if isinstance(track, mido.messages.messages.Message):
+            if track.type == 'note_on' or track.type == 'note_off':
+                if track.note > 60: # this might be melody
+                    track.velocity=80
+                    melody_track.append(track)
+
+                    track.velocity=0
+                    accompaniment_track.append(track)
+                else: # this might be accompaniment
+                    track.velocity=80
+                    accompaniment_track.append(track)
+
+                    track.velocity=0
+                    melody_track.append(track)
+
+        else:
+            accompaniment_track.append(track)
+
+    temp = mido.MidiFile(midi_path)
+    temp.tracks[1] = melody_track
+    melody_path = midi_path.split('/')[-1]+"_melody.mid"
+    temp.save(melody_path)
+    temp.tracks[1] = accompaniment_track
+    accompaniment_path = midi_path.split('/')[-1]+"_accompaniment.mid"
+    temp.save(accompaniment_path)
+
+    return melody_path, accompaniment_path
+
+def change_tempo(midi_path: str, tempo: int):
+    mid = mido.MidiFile(midi_path)
+    
+    # BPM을 마이크로초 per 비트로 변환
+    new_tempo = mido.bpm2tempo(tempo)
+    
+    # 새로운 트랙을 만들어 템포 메시지 추가
+    for track in mid.tracks:
+        for i, msg in enumerate(track):
+            if msg.type == 'set_tempo':
+                track[i] = mido.MetaMessage('set_tempo', tempo=new_tempo)
+    
+    # 수정된 MIDI 파일 저장
+    mid.save(midi_path)
+
+def change_key_signature(midi_path: str, key_signature: str):
+    # MIDI 파일 읽기
+    mid = mido.MidiFile(midi_path)
+    
+    # 새로운 MIDI 파일 생성
+    new_mid = mido.MidiFile()
+    
+    for i, track in enumerate(mid.tracks):
+        new_track = mido.MidiTrack()
+        new_mid.tracks.append(new_track)
         
-        # 특정 트랙의 악기가 주어진 범위에 속하는지 확인
-        keep_track = False
         for msg in track:
-            if msg.type == 'program_change':
-                if min_program <= msg.program <= max_program:
-                    keep_track = True
-                    break
-        
-        if keep_track:
-            new_midi.tracks.append(track)
+            if msg.type == 'key_signature':
+                # 키 시그니처 메시지를 새로운 키로 변경
+                new_msg = mido.MetaMessage('key_signature', key=key_signature)
+                new_track.append(new_msg)
+            else:
+                new_track.append(msg)
     
-    return new_midi
+    # 수정된 MIDI 파일 저장
+    new_mid.save(midi_path)
