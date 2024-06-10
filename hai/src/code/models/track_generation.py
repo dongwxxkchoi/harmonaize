@@ -259,18 +259,23 @@ def time_signature_reduce(numerator, denominator):
     return numerator, denominator
 
 def MIDI_to_encoding(midi_obj, with_chord, condition_inst, chord_from_single):
+    i = 0
+
     def time_to_pos(t):
         return round(t * pos_resolution / midi_obj.ticks_per_beat)
     notes_start_pos = [time_to_pos(j.start)
                        for i in midi_obj.instruments for j in i.notes]
+  
     if len(notes_start_pos) == 0:
         return list()
+
     max_pos = max(notes_start_pos) + 1
 
     pos_to_info = [[None for _ in range(4)] for _ in range(
         max_pos)] 
     tsc = midi_obj.time_signature_changes 
     tpc = midi_obj.tempo_changes
+
     for i in range(len(tsc)):
         for j in range(time_to_pos(tsc[i].time), time_to_pos(tsc[i + 1].time) if i < len(tsc) - 1 else max_pos):
             if j < len(pos_to_info):
@@ -383,6 +388,7 @@ def encoding_to_MIDI(encoding, tpc, decode_chord):
                       for _ in range(max(map(lambda x: x[0], encoding)) + 1)]
     for i in encoding:
         bar_to_timesig[i[0]].append(i[6])
+
     bar_to_timesig = [max(set(i), key=i.count) if len(
         i) > 0 else None for i in bar_to_timesig]
     for i in range(len(bar_to_timesig)):
@@ -396,6 +402,7 @@ def encoding_to_MIDI(encoding, tpc, decode_chord):
         ts = e2t(bar_to_timesig[i])
         measure_length = ts[0] * beat_note_factor * pos_resolution // ts[1]
         cur_pos += measure_length
+
     pos_to_tempo = [list() for _ in range(
         cur_pos + max(map(lambda x: x[1], encoding)))]
     for i in encoding:
@@ -457,6 +464,7 @@ def encoding_to_MIDI(encoding, tpc, decode_chord):
             midi_obj.tempo_changes.append(
                 miditoolkit.midi.containers.TempoChange(tempo=tempo, time=get_tick(0, i)))
             cur_tp = new_tp
+
     return midi_obj
 
 def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_single, tokens_to_ids, ids_to_tokens, empty_index, pad_index):
@@ -467,8 +475,8 @@ def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_
     # global pad_index
 
     empty_tracks = ~conditional_tracks & ~content_tracks
-    
     conditional_tracks &= ~empty_tracks # emptied tracks can not be condition
+
     conditional_tracks = torch.tensor(conditional_tracks).float()
     conditional_tracks = conditional_tracks.view(7,1).repeat(1,2).reshape(14,1)
     empty_tracks = torch.tensor(empty_tracks).float()
@@ -489,17 +497,12 @@ def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_
         return None, 0
 
     bar_index_offset = 0
-
     figure_size = encoding[-1][0] * pos_in_bar + encoding[-1][1]
-
     pad_length = 1 #(512 - figure_size % 512)
-
     figure_size += pad_length
 
     conditional_bool = conditional_tracks.repeat(1,figure_size)
-    
     empty_pos = empty_tracks.repeat(1, figure_size).type(torch.bool)
-
     datum = pad_index * torch.ones(14, figure_size, dtype=float)
     
     oov = 0
@@ -507,14 +510,14 @@ def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_
     
     chord_list = []
     
-    tempo = b2e(67)
+    # tempo = b2e(67)
+
+    tempo = b2e(midi_obj.tempo_changes[0].tempo)
 
     lead_start = 0
-
     idx = 0
     while idx != len(encoding) - 1:
         e = encoding[idx]
-
         bar = e[0]
         pos = e[1]
         inst = e[2]
@@ -572,18 +575,17 @@ def F(file_name, conditional_tracks, content_tracks, condition_inst, chord_from_
 
     datum = torch.where(empty_pos, empty_index, datum)
     datum = torch.where(((datum != empty_index).float() * (1 - conditional_bool)).type(torch.bool), empty_index + 1, datum)
-
+    datum = datum[:,:512]
+    conditional_bool = conditional_bool[:,:512]
     # datum = datum[:,:1024]
     # conditional_bool = conditional_bool[:,:1024]
 
     # if trunc:
-    datum = datum[:,:512]
-    conditional_bool = conditional_bool[:,:512]
+    # datum = datum[:,:512]
+    # conditional_bool = conditional_bool[:,:512]
 
     not_empty_pos = (torch.tensor(np.array(datum)) != empty_index).float()
-
     have_cond = True
-    
     for i in range(14):
         if with_chord and conditional_tracks[i] == 1 and ((datum[i] == pad_index).sum() + (datum[i] == empty_index).sum()) == min(512,figure_size):
             have_cond = False

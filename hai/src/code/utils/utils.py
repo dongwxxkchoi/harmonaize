@@ -6,7 +6,12 @@ import requests
 import re
 import mido
 import boto3
+from pydub import AudioSegment
+import librosa
+from miditoolkit import MidiFile
 from botocore.exceptions import ClientError
+
+from tqdm import tqdm
 
 import pretty_midi
 
@@ -146,7 +151,7 @@ def upload_to_s3(local_file_name: str, key: str):
         return None
 
 
-def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):
+def change_instrument1(instrument: str, midi_object: pretty_midi.PrettyMIDI):
     if instrument == "p":
         instrument_no = 0
     elif instrument == "g":
@@ -163,6 +168,31 @@ def change_instrument(instrument: str, midi_object: pretty_midi.PrettyMIDI):
 
     print("instrument changed")
     return midi_object
+
+def change_instrument(instrument: str, mid: mido.MidiFile):
+    # 악기 번호 설정
+    if instrument == "p":
+        instrument_no = 0
+    elif instrument == "g":
+        instrument_no = 24
+    elif instrument == "b":
+        instrument_no = 31
+    elif instrument == "l":
+        instrument_no = 79
+    else:
+        raise ValueError("Invalid instrument")
+
+    # 프로그램 변경 메시지 생성
+    program_change = mido.Message('program_change', program=instrument_no)
+
+    # 모든 트랙에 프로그램 변경 메시지 추가
+    for track in mid.tracks:
+        track.insert(0, program_change)
+
+    # 변경된 MIDI 파일 저장
+    return mid
+
+
 
 def load_yaml_config(path):
     with open(path) as f:
@@ -205,41 +235,136 @@ def set_tempo(midi_file, new_tempo):
         for msg in track:
             if msg.type == 'set_tempo':
                 msg.tempo = new_tempo
-
-def change_tempo_of_midi(original_file_path, generated_file_path, output_path):
-    # Load the MIDI files
-    midi1 = mido.MidiFile(original_file_path)
-    midi2 = mido.MidiFile(generated_file_path)
     
+    return midi_file
+
+def change_tempo_of_midi(mid):
     # Get the tempo from the first MIDI file
-    tempo = get_tempo(midi1)
+    tempo = get_tempo(mid)
     print("original tempo: ", tempo)
     
-    # Set the tempo for the second MIDI file
-    print("generated tempo: ", get_tempo(midi2))
-    set_tempo(midi2, tempo)
-    print("changed tempo: ", get_tempo(midi2))
+    set_tempo(mid, tempo)
     
-    # Save the modified second MIDI file
-    midi2.save(output_path)
-    print(f"Tempo of the second MIDI file has been set to match the first MIDI file and saved as {output_path}")
+    return mid
 
-def merge_midi_files(original_file_path, generated_file_path, output_file):
-    # 첫 번째 MIDI 파일 로드
-    midi1 = mido.MidiFile(original_file_path)
-    # 두 번째 MIDI 파일 로드
-    midi2 = mido.MidiFile(generated_file_path)
+# def merge_midi_files(midi1, midi2, output_file):
     
+#     for track in midi2.tracks:
+#         midi1.tracks.append(track)
+
+#     # 병합된 MIDI 파일 저장
+#     midi1.save(output_file)
+
+def merge_midi_files(midi1, midi2):
+    # Create a new MIDI file to hold the merged tracks
+    merged_midi = mido.MidiFile(ticks_per_beat=midi1.ticks_per_beat)
+
+    # Helper function to convert time values based on ticks_per_beat
+    def convert_time(msg, old_ticks_per_beat, new_ticks_per_beat):
+        if msg.time == 0:
+            return msg.time
+        scale_factor = new_ticks_per_beat / old_ticks_per_beat
+        return int(msg.time * scale_factor)
+
+    # Add tracks from midi1 to the merged MIDI file
+    for track in midi1.tracks:
+        new_track = mido.MidiTrack()
+        for msg in track:
+            new_msg = msg.copy(time=convert_time(msg, midi1.ticks_per_beat, merged_midi.ticks_per_beat))
+            new_track.append(new_msg)
+        merged_midi.tracks.append(new_track)
+
+    # Add tracks from midi2 to the merged MIDI file
     for track in midi2.tracks:
-        midi1.tracks.append(track)
+        new_track = mido.MidiTrack()
+        for msg in track:
+            new_msg = msg.copy(time=convert_time(msg, midi2.ticks_per_beat, merged_midi.ticks_per_beat))
+            new_track.append(new_msg)
+        merged_midi.tracks.append(new_track)
 
-    # 병합된 MIDI 파일 저장
-    midi1.save(output_file)
+    return merged_midi
 
-def remove_instrument_events(midi_file_path, instrument, output_path):
+
+# def change_velocity(midi: mido.MidiFile, lead_instrument: str, instrument_set: str):
+
+def change_velocity(midi: mido.MidiFile):
+    # 악기 번호를 설정합니다.
+    instrument_mapping = {
+        'piano': 0,
+        'guitar': 25,
+        'bass': 32
+    }
+
+    # 설정할 벨로시티 값을 설정합니다.
+    velocity_mapping = {
+        'drum': 60,
+        'piano': 80,
+        'guitar': 80,
+        'bass': 80
+    }
+
+    # 벨로시티를 변경하는 함수
+    def set_velocity(msg, velocity):
+        if msg.type in ['note_on', 'note_off']:
+            return msg.copy(velocity=velocity)
+        return msg
+
+    # MIDI 파일의 각 트랙을 순회하면서 벨로시티를 변경합니다.
+    for i, track in tqdm(enumerate(midi.tracks)):
+        new_track = mido.MidiTrack()
+        current_program = None
+
+        for msg in track:
+            if msg.type == 'program_change':
+                current_program = msg.program
+            elif msg.type in ['note_on', 'note_off']:
+                if msg.channel == 9:
+                    # 드럼 채널
+                    msg = set_velocity(msg, velocity_mapping['drum'])
+                elif current_program is not None:
+                    for instrument, program in instrument_mapping.items():
+                        if current_program == program:
+                            msg = set_velocity(msg, velocity_mapping[instrument])
+                            break
+            new_track.append(msg)
+        
+        midi.tracks.append(new_track)
+
+    return midi
+
+
+def modify_midi_velocity(midi_data, piano_velocity=60, guitar_velocity=70, bass_velocity=90, drum_velocity=60):
+    # 프로그램 채널 확인
+    program_channels = [None] * 16
+
+    # 트랙 순회
+    for track in midi_data.tracks:
+        for msg in track:
+            if msg.type == 'program_change':
+                program_channels[msg.channel] = msg.program
+
+    # velocity 변경
+    for i, track in enumerate(midi_data.tracks):
+        for j, msg in enumerate(track):
+            if msg.type == 'note_on' or msg.type == 'note_off':
+                if msg.channel == 9:  # 드럼 채널
+                    midi_data.tracks[i][j].velocity = drum_velocity
+                else:
+                    program = program_channels[msg.channel]
+                    if program is not None:
+                        if 0 <= program <= 7:  # 피아노
+                            midi_data.tracks[i][j].velocity = piano_velocity
+                        elif 24 <= program <= 31:  # 기타
+                            midi_data.tracks[i][j].velocity = guitar_velocity
+                        elif 32 <= program <= 39:  # 베이스
+                            midi_data.tracks[i][j].velocity = bass_velocity
+
+    return midi_data
+
+
+
+def remove_instrument_events(mid, instrument, output_path):
     # 특정 악기 이벤트를 제거할 새로운 MIDI 파일 객체 생성
-    new_midi = mido.MidiFile()
-    midi = mido.MidiFile(midi_file_path)
 
     if instrument == 'p':
         instrument_num = 0
@@ -252,55 +377,262 @@ def remove_instrument_events(midi_file_path, instrument, output_path):
     elif instrument == 'l':
         instrument_num = 80
 
-    remove_flag = False
-
     # 입력 MIDI 파일의 각 트랙을 순회하면서 필요한 악기 이벤트를 제거하고 새로운 MIDI 파일에 추가
-    for track in midi.tracks:
-        new_track = mido.MidiTrack()
+    for track in mid.tracks:
+        new_msgs = []
+        remove_flag = False
+
         for msg in track:
             # 프로그램 변경 이벤트(악기 변경)를 찾아 해당 악기 이벤트를 제거하거나 볼륨을 0으로 설정
             if isinstance(msg,mido.messages.messages.Message):
                 if msg.type == 'program_change':
-                    if instrument == 'p' and msg.channel == 0 and msg.program == instrument_num:
+                    if (instrument == 'p' and msg.channel == 0 and msg.program == instrument_num) or msg.program == instrument_num:
                         remove_flag = True
-                    elif msg.program == instrument_num:
-                        remove_flag=True
                     else:
                         remove_flag=False
 
-            if remove_flag:
-                continue
-            else:
-                new_track.append(msg)
+            if not remove_flag:
+                new_msgs.append(msg)
                 
-        new_midi.tracks.append(new_track)
+        track.clear()
+        track.extend(new_msgs)
 
-    new_midi.save(output_path)
+    mid.save(output_path)
+    return mid
+
+def extract_tempo(audio_path: str):
+    y, sr = librosa.load(audio_path)
+    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+    return tempo
+
+def make_audio_to_mp3(audio_path: str):
+    output_file_path = audio_path.split('.')[0] + ".mp3"
+
+    audio = AudioSegment.from_file(audio_path)
+    audio.export(output_file_path, format="mp3")
+
+    return output_file_path
+
+def extract_key(audio_path: str):
+    # 오디오 파일을 로드합니다.
+    y, sr = librosa.load(audio_path)
     
-
-def process_instrument_train(midi_file):
-    # 0 - 7, 16 - 23 -> Piano
-    # 24 - 31 -> Guitar
-    # 32 - 39 -> Bass
-    # 40 - 47 -> Strings
-    # 112 - 119 -> Drum
-
-    new_midi = mido.MidiFile()
+    # 피치 클래스 (C, C#, D, D#, E, F, F#, G, G#, A, A#, B) 프로필을 추출합니다.
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
     
+    # 각 피치 클래스의 평균 값을 계산합니다.
+    chroma_mean = chroma.mean(axis=1)
+    
+    # 가장 높은 값을 가진 피치 클래스를 찾습니다.
+    key_index = chroma_mean.argmax()
+    
+    # 피치 클래스에 해당하는 키를 정의합니다.
+    keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    
+    # 키를 반환합니다.
+    return keys[key_index]
+
+
+# audio 받았을 때 필요함
+# def separate_melody(midi_path: str):
+#     midi_track = mido.MidiFile(midi_path)
+
+#     for i, track in enumerate(midi_track.tracks[1]):
+#         if isinstance(track, mido.messages.messages.Message):
+#             if track.type == 'note_on' or track.type == 'note_off':
+#                 if track.note > 60: # this might be melody
+#                     midi_track.tracks[1][i].velocity=0
+#                 else: # this might be accompaniment
+#                     midi_track.tracks[1][i].velocity=80
+
+#     accompaniment_path = midi_path.split('/')[-1].split('.')[0]+"_accompaniment.mid"
+#     midi_track.save(accompaniment_path)
+
+
+#     midi_track = mido.MidiFile(midi_path)
+
+#     for i, track in enumerate(midi_track.tracks[1]):
+#         if isinstance(track, mido.messages.messages.Message):
+#             if track.type == 'note_on' or track.type == 'note_off':
+#                 if track.note > 60: # this might be melody
+#                     midi_track.tracks[1][i].velocity=80
+#                 else: # this might be accompaniment
+#                     midi_track.tracks[1][i].velocity=0
+
+#     melody_path = midi_path.split('/')[-1].split('.')[0]+"_melody.mid"
+#     midi_track.save(melody_path)
+
+#     # accompaniment_path = midi_path.split('/')[-1].split('.')[0]+"_accompaniment.mid"
+#     # midi_track.save(accompaniment_path)
+#     # print(mido.MidiFile(accompaniment_path))
+
+#     # melody_track = mido.midifiles.tracks.MidiTrack()
+    
+#     # melody_track.append(mido.MidiFile(midi_path).tracks[0])
+#     # for i, track in enumerate(mido.MidiFile(midi_path).tracks[1]):
+#     #     if isinstance(track, mido.messages.messages.Message):
+#     #         if track.type == 'note_on' or track.type == 'note_off':
+#     #             if track.note > 60: # this might be melody
+#     #                 track.velocity=80
+#     #                 melody_track.append(track)
+#     #             else: # this might be accompaniment
+#     #                 track.velocity=0
+#     #                 melody_track.append(track)
+#     #         else:
+#     #             melody_track.append(track)
+#     #     else:
+#     #         melody_track.append(track)
+
+#     # temp = mido.MidiFile(midi_path)
+#     # temp.tracks[1] = melody_track
+#     # melody_path = midi_path.split('/')[-1].split('.')[0]+"_melody.mid"
+#     # temp.save(melody_path)
+
+#     return melody_path, accompaniment_path
+
+# def separate_melody(midi_path: str):
+#     midi = MidiFile(midi_path)
+
+#     # 반주와 멜로디를 저장할 MIDI 파일 객체 생성
+#     accompaniment_midi = MidiFile()
+#     melody_midi = MidiFile()
+
+#     for track in midi.instruments[0].tracks:  # 첫 번째 악기의 트랙을 사용하여 처리
+#         accompaniment_track = []
+#         melody_track = []
+
+#         for event in track:
+#             if event.is_note_on():  # NoteOn 이벤트를 대체
+#                 if event.pitch > 60:  # 멜로디로 추정
+#                     melody_track.append(event)
+#                 else:  # 반주로 추정
+#                     accompaniment_track.append(event)
+#             elif event.is_note_off():  # NoteOff 이벤트를 대체
+#                 if event.pitch > 60:  # 멜로디로 추정
+#                     melody_track.append(event)
+#                 else:  # 반주로 추정
+#                     accompaniment_track.append(event)
+
+#         # 반주와 멜로디 트랙을 생성된 MIDI 파일에 추가
+#         accompaniment_midi.instruments[0].tracks.append(accompaniment_track)
+#         melody_midi.instruments[0].tracks.append(melody_track)
+
+#     # 파일 이름 생성
+#     accompaniment_path = midi_path.split('/')[-1].split('.')[0] + "_accompaniment.mid"
+#     melody_path = midi_path.split('/')[-1].split('.')[0] + "_melody.mid"
+
+#     # MIDI 파일 저장
+#     accompaniment_midi.dump(accompaniment_path)
+#     melody_midi.dump(melody_path)
+
+
+#     return melody_path, accompaniment_path
+
+import mido
+
+def separate_melody(midi_file: mido.MidiFile, midi_path: str, resolution: int):
+
+    # 멜로디와 반주를 위한 새로운 MIDI 파일 생성
+    melody_file = mido.MidiFile(ticks_per_beat=resolution)
+    accompaniment_file = mido.MidiFile(ticks_per_beat=resolution)
+
+    # 원본 메타데이터 및 기타 비노트 이벤트를 새로운 파일에 복사
     for i, track in enumerate(midi_file.tracks):
-        if i != track_number:  # 트랙 번호가 일치하지 않으면 무시하고 다음 트랙으로 이동
-            new_midi.tracks.append(track)
-            continue
+        new_melody_track = mido.MidiTrack()
+        new_accompaniment_track = mido.MidiTrack()
         
-        # 특정 트랙의 악기가 주어진 범위에 속하는지 확인
-        keep_track = False
+        melody_file.tracks.append(new_melody_track)
+        accompaniment_file.tracks.append(new_accompaniment_track)
+        
         for msg in track:
-            if msg.type == 'program_change':
-                if min_program <= msg.program <= max_program:
-                    keep_track = True
-                    break
-        
-        if keep_track:
-            new_midi.tracks.append(track)
+            if msg.type in ['note_on', 'note_off']:
+                if msg.note > 59:
+                    # 멜로디 노트를 멜로디 트랙에 복사
+                    new_melody_track.append(msg)
+                    # 반주 트랙에는 음소거된 노트 추가
+                    if msg.type == 'note_on':
+                        accompaniment_msg = msg.copy(velocity=0)
+                        new_accompaniment_track.append(accompaniment_msg)
+                    else:
+                        melody_msg = msg.copy(velocity=80)
+                        new_accompaniment_track.append(melody_msg)
+                else:
+                    # 반주 노트를 반주 트랙에 복사
+                    new_accompaniment_track.append(msg)
+                    # 멜로디 트랙에는 음소거된 노트 추가
+                    if msg.type == 'note_on':
+                        melody_msg = msg.copy(velocity=0)
+                        new_melody_track.append(melody_msg)
+                    else:
+                        accompaniment_msg = msg.copy(velocity=80)
+                        new_melody_track.append(accompaniment_msg)
+            else:
+                # 다른 메시지들(e.g., 컨트롤 체인지, 프로그램 체인지)은 두 트랙에 복사
+                new_melody_track.append(msg)
+                new_accompaniment_track.append(msg)
     
-    return new_midi
+    # 새로운 MIDI 파일 저장
+    accompaniment_path = midi_path.split('/')[-1].split('.')[0] + "_accompaniment.mid"
+    melody_path = midi_path.split('/')[-1].split('.')[0] + "_melody.mid"
+
+    accompaniment_file.save(accompaniment_path)
+    melody_file.save(melody_path)
+
+    return melody_path, accompaniment_path
+
+
+
+
+def change_tempo(mid: mido.MidiFile, tempo: int):
+    # BPM을 마이크로초 per 비트로 변환
+    new_tempo = mido.bpm2tempo(tempo)
+    
+    # 새로운 트랙을 만들어 템포 메시지 추가
+    for track in mid.tracks:
+        for i, msg in enumerate(track):
+            if msg.type == 'set_tempo':
+                track[i] = mido.MetaMessage('set_tempo', tempo=new_tempo)
+    
+    # 수정된 MIDI 파일 저장
+    return mid
+
+def change_key_signature(mid: mido.MidiFile, key_signature: str):
+    # 새로운 키 시그니처 메시지 생성
+    new_key_msg = mido.MetaMessage('key_signature', key=key_signature)
+
+    # 모든 트랙에 대해 반복
+    for j, track in enumerate(mid.tracks):
+        key_found = False  # 키 시그니처가 이미 있는지 여부를 나타내는 플래그
+        
+        # 트랙의 메시지를 순회하면서 키 시그니처를 찾음
+        for i, msg in enumerate(track):
+            if msg.type == 'key_signature':
+                # 키 시그니처를 새로운 키로 변경
+                track[i] = new_key_msg
+                key_found = True  # 키 시그니처를 발견했음을 표시
+                break
+        
+        # 키 시그니처가 발견되지 않은 경우, 트랙의 시작에 새로운 키 시그니처 추가
+        if not key_found:
+            track.insert(0, new_key_msg)
+    
+    # 수정된 MIDI 파일 반환
+    return mid
+
+def remove_pitchwheel(midi_path: str):
+    midi_file = mido.MidiFile(midi_path)
+    new_midi_file = mido.MidiFile()
+
+    for i, track in enumerate(midi_file.tracks):
+        new_track = mido.MidiTrack()
+        new_midi_file.tracks.append(new_track)
+        
+        for msg in track:
+            if msg.type != 'pitchwheel':
+                new_track.append(msg)
+    
+    new_midi_file.save(midi_path)
+
+def get_midi_division(midi_path: str) -> int:
+    midi_file = mido.MidiFile(midi_path)
+    return midi_file.ticks_per_beat

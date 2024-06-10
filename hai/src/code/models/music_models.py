@@ -8,13 +8,14 @@ class Mp3ToMIDIModel:
     def __init__(self):
         self.model = Model(model_path = ICASSP_2022_MODEL_PATH)
     
-    def pred(self, audio_path: str, parameters: List[float]):
+    def pred(self, audio_path: str, tempo: int):
         model_output, midi_data, note_events = predict(
             audio_path=audio_path,
             model_or_model_path=self.model,
             onset_threshold=0.7,
             frame_threshold=0.5,
-            minimum_note_length=150
+            minimum_note_length=150,
+            midi_tempo=tempo
         )
 
         return model_output, midi_data, note_events

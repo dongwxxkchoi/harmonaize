@@ -6,3 +6,7 @@ __pycache__/
 data
 configs/config.json
 env/*
+*.mid
+*.mp3
+*.mpga
+*.wav
