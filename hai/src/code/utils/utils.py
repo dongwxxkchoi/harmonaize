@@ -387,7 +387,7 @@ def remove_instrument_events(mid, instrument, output_path):
                     if (instrument == 'p' and msg.channel == 0 and msg.program == instrument_num) or msg.program == instrument_num:
                         remove_flag = True
                     else:
-                        remove_flag=False
+                        remove_flag = False
 
             if not remove_flag:
                 new_msgs.append(msg)
