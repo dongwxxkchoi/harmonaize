@@ -9,7 +9,10 @@ import boto3
 from pydub import AudioSegment
 import librosa
 from miditoolkit import MidiFile
+import random
+import string
 from botocore.exceptions import ClientError
+import subprocess
 
 from tqdm import tqdm
 
@@ -34,13 +37,6 @@ def download_from_s3(bucket_name: str, local_file_name: str, key: str):
     res = s3_client.download_file(Bucket=bucket_name, Key=key, Filename=local_file_name)
 
     return res
-
-# def download_from_s3_requests(s3_url: str, local_file_path: str):
-#     response = requests.get(s3_url)
-#     with open(local_file_path, 'wb') as f:
-#         f.write(response.content)
-
-#     return os.path.exists(local_file_path)
 
 def download_from_s3_requests(s3_url: str, local_file_path: str):
     try:
@@ -86,6 +82,17 @@ def get_s3_client():
     
     return s3_client
 
+def check_file_exists(bucket_name, file_key):
+    s3 = boto3.client('s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+    
+    try:
+        s3.head_object(Bucket=bucket_name, Key=file_key)
+        return True
+    except Exception as e:
+        return False
+
+
+
 def make_s3_folder(s3_client: boto3.client, user: str):
 
     try:
@@ -119,15 +126,6 @@ def make_and_get_user_folder_path(user: str):
     os.makedirs(user_folder, exist_ok=True)
 
     return user_folder
-
-# def upload_to_s3(local_file_name: str, key: str):
-#     s3_client = boto3.client(service_name='s3', aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
-#     res = s3_client.upload_file(local_file_name, BUCKET_NAME, key)
-
-#     # s3_client.put_object_acl(ACL='public-read', Bucket=BUCKET_NAME, Key=key)
-#     object_url = f"https://{BUCKET_NAME}.s3.ap-northeast-2.amazonaws.com/{key}"
-    
-#     return object_url
 
 def upload_to_s3(local_file_name: str, key: str):
     try:
@@ -333,7 +331,7 @@ def change_velocity(midi: mido.MidiFile):
     return midi
 
 
-def modify_midi_velocity(midi_data, piano_velocity=60, guitar_velocity=70, bass_velocity=90, drum_velocity=60):
+def modify_midi_velocity(midi_data, piano_velocity=50, guitar_velocity=70, bass_velocity=90, drum_velocity=60):
     # 프로그램 채널 확인
     program_channels = [None] * 16
 
@@ -432,104 +430,6 @@ def extract_key(audio_path: str):
     # 키를 반환합니다.
     return keys[key_index]
 
-
-# audio 받았을 때 필요함
-# def separate_melody(midi_path: str):
-#     midi_track = mido.MidiFile(midi_path)
-
-#     for i, track in enumerate(midi_track.tracks[1]):
-#         if isinstance(track, mido.messages.messages.Message):
-#             if track.type == 'note_on' or track.type == 'note_off':
-#                 if track.note > 60: # this might be melody
-#                     midi_track.tracks[1][i].velocity=0
-#                 else: # this might be accompaniment
-#                     midi_track.tracks[1][i].velocity=80
-
-#     accompaniment_path = midi_path.split('/')[-1].split('.')[0]+"_accompaniment.mid"
-#     midi_track.save(accompaniment_path)
-
-
-#     midi_track = mido.MidiFile(midi_path)
-
-#     for i, track in enumerate(midi_track.tracks[1]):
-#         if isinstance(track, mido.messages.messages.Message):
-#             if track.type == 'note_on' or track.type == 'note_off':
-#                 if track.note > 60: # this might be melody
-#                     midi_track.tracks[1][i].velocity=80
-#                 else: # this might be accompaniment
-#                     midi_track.tracks[1][i].velocity=0
-
-#     melody_path = midi_path.split('/')[-1].split('.')[0]+"_melody.mid"
-#     midi_track.save(melody_path)
-
-#     # accompaniment_path = midi_path.split('/')[-1].split('.')[0]+"_accompaniment.mid"
-#     # midi_track.save(accompaniment_path)
-#     # print(mido.MidiFile(accompaniment_path))
-
-#     # melody_track = mido.midifiles.tracks.MidiTrack()
-    
-#     # melody_track.append(mido.MidiFile(midi_path).tracks[0])
-#     # for i, track in enumerate(mido.MidiFile(midi_path).tracks[1]):
-#     #     if isinstance(track, mido.messages.messages.Message):
-#     #         if track.type == 'note_on' or track.type == 'note_off':
-#     #             if track.note > 60: # this might be melody
-#     #                 track.velocity=80
-#     #                 melody_track.append(track)
-#     #             else: # this might be accompaniment
-#     #                 track.velocity=0
-#     #                 melody_track.append(track)
-#     #         else:
-#     #             melody_track.append(track)
-#     #     else:
-#     #         melody_track.append(track)
-
-#     # temp = mido.MidiFile(midi_path)
-#     # temp.tracks[1] = melody_track
-#     # melody_path = midi_path.split('/')[-1].split('.')[0]+"_melody.mid"
-#     # temp.save(melody_path)
-
-#     return melody_path, accompaniment_path
-
-# def separate_melody(midi_path: str):
-#     midi = MidiFile(midi_path)
-
-#     # 반주와 멜로디를 저장할 MIDI 파일 객체 생성
-#     accompaniment_midi = MidiFile()
-#     melody_midi = MidiFile()
-
-#     for track in midi.instruments[0].tracks:  # 첫 번째 악기의 트랙을 사용하여 처리
-#         accompaniment_track = []
-#         melody_track = []
-
-#         for event in track:
-#             if event.is_note_on():  # NoteOn 이벤트를 대체
-#                 if event.pitch > 60:  # 멜로디로 추정
-#                     melody_track.append(event)
-#                 else:  # 반주로 추정
-#                     accompaniment_track.append(event)
-#             elif event.is_note_off():  # NoteOff 이벤트를 대체
-#                 if event.pitch > 60:  # 멜로디로 추정
-#                     melody_track.append(event)
-#                 else:  # 반주로 추정
-#                     accompaniment_track.append(event)
-
-#         # 반주와 멜로디 트랙을 생성된 MIDI 파일에 추가
-#         accompaniment_midi.instruments[0].tracks.append(accompaniment_track)
-#         melody_midi.instruments[0].tracks.append(melody_track)
-
-#     # 파일 이름 생성
-#     accompaniment_path = midi_path.split('/')[-1].split('.')[0] + "_accompaniment.mid"
-#     melody_path = midi_path.split('/')[-1].split('.')[0] + "_melody.mid"
-
-#     # MIDI 파일 저장
-#     accompaniment_midi.dump(accompaniment_path)
-#     melody_midi.dump(melody_path)
-
-
-#     return melody_path, accompaniment_path
-
-import mido
-
 def separate_melody(midi_file: mido.MidiFile, midi_path: str, resolution: int):
 
     # 멜로디와 반주를 위한 새로운 MIDI 파일 생성
@@ -579,8 +479,6 @@ def separate_melody(midi_file: mido.MidiFile, midi_path: str, resolution: int):
     melody_file.save(melody_path)
 
     return melody_path, accompaniment_path
-
-
 
 
 def change_tempo(mid: mido.MidiFile, tempo: int):
@@ -636,3 +534,11 @@ def remove_pitchwheel(midi_path: str):
 def get_midi_division(midi_path: str) -> int:
     midi_file = mido.MidiFile(midi_path)
     return midi_file.ticks_per_beat
+
+def generate_random_string(length=4):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for _ in range(length))
+
+def convert_midi_to_mp3(input_midi, output_mp3):
+    timidity_process = subprocess.run(['timidity', input_midi, '-Ow', '-o', 'output.wav'])
+    lame_process = subprocess.run(['lame', 'output.wav', output_mp3])

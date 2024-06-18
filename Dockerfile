@@ -12,9 +12,12 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+RUN apt-get install xvfb && \
+    apt-get install musescore
+
 RUN pip install -U pip &&\
     pip install basic-pitch  && \
-    pip install uvicorn fastapi pyyaml boto3 pretty_midi miditoolkit tensorboard tqdm transformers einops mido pydub librosa && \    
+    pip install uvicorn fastapi pyyaml boto3 pretty_midi miditoolkit tensorboard tqdm transformers einops mido pydub librosa music21 && \    
     pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 ENTRYPOINT ["uvicorn", "hai.src.code.bin.app:app", "--host", "0.0.0.0", "--port", "8080"]
